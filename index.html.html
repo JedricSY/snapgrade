@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SnapGrade - Smart Assessment</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        primary: { 50: '#eef2ff', 100: '#e0e7ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' }
+                    },
+                    animation: { 'slide-up': 'slideUp 0.3s ease-out' },
+                    keyframes: { slideUp: { '0%': { transform: 'translateY(20px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } } }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        body { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; height: 100dvh; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+
+        .omr-bubble {
+            width: 32px; height: 32px;
+            border-radius: 50%; border: 2px solid #94a3b8;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 14px; font-weight: 600; color: #64748b;
+            cursor: pointer; transition: all 0.2s; user-select: none;
+        }
+        .dark .omr-bubble { border-color: #475569; color: #94a3b8; }
+        .omr-bubble.selected { background-color: #4f46e5; border-color: #4f46e5; color: white; }
+
+        #videoElement { width: 100%; height: 100%; object-fit: cover; }
+        #overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;}
+        
+        /* Strict aspect ratio for scanning mapping (800x1000 = 0.8) */
+        .guide-box {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            aspect-ratio: 0.8; height: 85%; max-width: 95%;
+            border: 2px solid rgba(255,255,255,0.8); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5); pointer-events: none;
+        }
+        .guide-corner { position: absolute; width: 30px; height: 30px; border: 4px solid #10b981; }
+        .corner-tl { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+        .corner-tr { top: -2px; right: -2px; border-left: none; border-bottom: none; }
+        .corner-bl { bottom: -2px; left: -2px; border-right: none; border-top: none; }
+        .corner-br { bottom: -2px; right: -2px; border-left: none; border-top: none; }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #4f46e5; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-200 dark:bg-black h-[100dvh] flex justify-center overflow-hidden font-sans text-gray-900 dark:text-gray-100">
+    
+    <div class="w-full max-w-md h-full bg-gray-50 dark:bg-gray-900 shadow-2xl flex flex-col relative overflow-hidden">
+        
+        <header id="main-header" class="shrink-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex justify-between items-center z-30">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-primary-600 text-white flex items-center justify-center font-bold text-lg shadow-sm"><i class="fas fa-camera"></i></div>
+                <h1 class="text-xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-primary-600 to-purple-500 tracking-tight">SnapGrade</h1>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="App.UI.showModal('modal-help')" class="w-10 h-10 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-center transition-colors text-primary-600">
+                    <i class="fas fa-circle-question text-xl"></i>
+                </button>
+                <button id="themeToggle" class="w-10 h-10 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-center transition-colors">
+                    <i class="fas fa-moon text-lg text-gray-600 dark:text-gray-300"></i>
+                </button>
+            </div>
+        </header>
+
+        <main id="appContainer" class="flex-1 relative overflow-y-auto overflow-x-hidden">
+            
+            <!-- VIEW: HOME -->
+            <div id="view-home" class="app-view flex flex-col p-4 space-y-6">
+                <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-4 flex flex-col shadow-sm">
+                    <div class="flex items-center gap-2 mb-2"><i class="fas fa-info-circle text-blue-600 dark:text-blue-400 text-xl"></i><h3 class="font-bold text-blue-900 dark:text-blue-100 text-lg">Welcome to SnapGrade!</h3></div>
+                    <p class="text-sm text-blue-800 dark:text-blue-200 mb-3">Ensure your papers are well-lit. Create an exam, assign it, and scan away! Real OMR is active.</p>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
+                        <div class="text-gray-500 text-sm font-medium mb-1"><i class="fas fa-file-lines text-primary-500 mr-1"></i> Active Exams</div>
+                        <div class="text-3xl font-black" id="stat-active-exams">0</div>
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
+                        <div class="text-gray-500 text-sm font-medium mb-1"><i class="fas fa-users text-green-500 mr-1"></i> Sections</div>
+                        <div class="text-3xl font-black" id="stat-total-sections">0</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-4"><h2 class="text-xl font-bold">Assigned Exams</h2><button onclick="App.Controllers.Home.showAssignModal()" class="px-4 py-2 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded-lg text-sm font-bold shadow-sm hover:bg-primary-200 transition-colors"><i class="fas fa-plus mr-1"></i> Assign</button></div>
+                    <div id="home-assignments-list" class="space-y-3 pb-6"></div>
+                </div>
+            </div>
+
+            <!-- VIEW: EXAMS -->
+            <div id="view-exams" class="app-view hidden flex-col p-4">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">Exams</h2>
+                    <button onclick="App.UI.showModal('modal-exam-form')" class="px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-bold shadow-md transition-colors flex items-center gap-2"><i class="fas fa-plus"></i> New Exam</button>
+                </div>
+                <div class="relative mb-4">
+                    <i class="fas fa-search absolute left-4 top-3.5 text-gray-400"></i>
+                    <input type="text" id="search-exams" placeholder="Search exams..." class="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 outline-none transition-all shadow-sm">
+                </div>
+                <div id="exams-list" class="space-y-3 pb-6"></div>
+            </div>
+            
+            <!-- VIEW: SECTIONS -->
+            <div id="view-sections" class="app-view hidden flex-col p-4">
+                 <div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold">Sections</h2><button onclick="App.Controllers.Sections.newSection()" class="px-5 py-2.5 bg-primary-600 text-white rounded-xl font-bold shadow-md"><i class="fas fa-plus"></i> New Section</button></div>
+                 <div class="relative mb-4"><i class="fas fa-search absolute left-4 top-3.5 text-gray-400"></i><input type="text" id="search-sections" placeholder="Search sections..." class="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 outline-none shadow-sm"></div>
+                 <div id="sections-list" class="flex flex-col gap-3 pb-6"></div>
+            </div>
+
+            <!-- VIEW: SECTION DETAILS (STUDENTS) -->
+            <div id="view-section-details" class="app-view hidden flex-col p-4">
+                <div class="flex items-center gap-3 mb-6">
+                    <button onclick="App.navigate('sections')" class="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center"><i class="fas fa-arrow-left"></i></button>
+                    <h2 class="text-2xl font-bold flex-1" id="active-section-name">Section</h2>
+                </div>
+                <div class="flex gap-2 mb-4">
+                    <button onclick="App.UI.showModal('modal-student-form')" class="flex-1 py-2 bg-primary-100 text-primary-700 rounded-lg font-bold text-sm"><i class="fas fa-user-plus"></i> Add Student</button>
+                    <button onclick="App.UI.showModal('modal-bulk-import')" class="flex-1 py-2 bg-purple-100 text-purple-700 rounded-lg font-bold text-sm"><i class="fas fa-file-csv"></i> Bulk Import</button>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden mb-6">
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700"><tr><th class="p-3 w-16 text-center">Roll</th><th class="p-3">Name</th><th class="p-3 w-16"></th></tr></thead>
+                        <tbody id="students-list" class="divide-y divide-gray-100 dark:divide-gray-700"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- VIEW: SETTINGS -->
+            <div id="view-settings" class="app-view hidden flex-col p-4 space-y-6">
+                <h2 class="text-2xl font-bold mb-2">Settings & Calibration</h2>
+                
+                <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden divide-y divide-gray-100 dark:divide-gray-700 p-4">
+                    <h3 class="font-bold mb-3 flex items-center gap-2"><i class="fas fa-sliders text-primary-500"></i> Camera Calibration</h3>
+                    <div class="space-y-4 pt-2">
+                        <div>
+                            <div class="flex justify-between text-sm mb-1"><span>B/W Threshold</span><span id="val-thresh">128</span></div>
+                            <input type="range" id="calib-threshold" min="0" max="255" value="128" class="w-full" oninput="$('val-thresh').innerText=this.value">
+                            <p class="text-[10px] text-gray-500 mt-1">Lower if paper is bright, higher if dark.</p>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-sm mb-1"><span>Bubble Fill Sensitivity</span><span id="val-sens">40%</span></div>
+                            <input type="range" id="calib-sensitivity" min="10" max="90" value="40" class="w-full" oninput="$('val-sens').innerText=this.value+'%'">
+                            <p class="text-[10px] text-gray-500 mt-1">Percentage of dark pixels required to count as filled.</p>
+                        </div>
+                        <button onclick="App.Controllers.Settings.saveCalibration()" class="w-full py-2 bg-gray-100 dark:bg-gray-700 rounded-lg font-bold text-sm">Save Calibration</button>
+                    </div>
+                </div>
+
+                <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden divide-y divide-gray-100 dark:divide-gray-700">
+                    <button onclick="App.Controllers.Settings.exportDatabase()" class="w-full p-4 flex items-center gap-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"><div class="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center"><i class="fas fa-file-export"></i></div><div><div class="font-bold">Export Database</div><div class="text-sm text-gray-500">Backup JSON data</div></div></button>
+                    <label class="w-full p-4 flex items-center gap-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors cursor-pointer"><div class="w-10 h-10 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center"><i class="fas fa-file-import"></i></div><div><div class="font-bold">Import Database</div><div class="text-sm text-gray-500">Restore JSON data</div><input type="file" id="import-db-file" accept=".json" class="hidden" onchange="App.Controllers.Settings.importDatabase(event)"></div></label>
+                    <button onclick="App.clearDatabase()" class="w-full p-4 flex items-center gap-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"><div class="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center"><i class="fas fa-trash"></i></div><div><div class="font-bold text-red-600">Factory Reset</div><div class="text-sm text-gray-500">Delete all local data</div></div></button>
+                </div>
+            </div>
+
+            <!-- VIEW: SCANNER -->
+            <div id="view-scanner" class="app-view hidden absolute inset-0 z-40 bg-black">
+                <video id="videoElement" autoplay playsinline muted></video>
+                <canvas id="overlayCanvas"></canvas>
+                
+                <div id="camera-start-overlay" class="absolute inset-0 z-50 bg-black/90 flex flex-col items-center justify-center text-white p-6 text-center" style="display: none;">
+                    <i class="fas fa-video-slash text-6xl mb-4 text-red-400"></i>
+                    <h3 class="text-xl font-bold mb-2">Camera Access Required</h3>
+                    <p class="mb-6 text-gray-300 text-sm">Please allow camera permissions in your browser.</p>
+                    <button id="btn-start-camera" class="px-6 py-3 bg-primary-600 rounded-full font-bold shadow-lg flex items-center gap-2"><i class="fas fa-camera"></i> Request Access</button>
+                </div>
+
+                <div class="guide-box" id="scanner-guide">
+                    <div class="guide-corner corner-tl"></div><div class="guide-corner corner-tr"></div>
+                    <div class="guide-corner corner-bl"></div><div class="guide-corner corner-br"></div>
+                    <div class="absolute inset-0 border border-white/20 border-dashed"></div>
+                </div>
+
+                <div class="absolute inset-0 z-50 flex flex-col justify-between pointer-events-none">
+                    <div class="p-4 flex justify-between items-start bg-gradient-to-b from-black/80 to-transparent pointer-events-auto">
+                        <button onclick="App.navigate('home')" class="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-white text-xl"><i class="fas fa-xmark"></i></button>
+                        <div class="flex flex-col items-center"><div id="scanner-active-assignment-name" class="bg-white/20 backdrop-blur text-white rounded-lg px-3 py-1.5 text-sm font-bold mb-1 shadow">Loading...</div></div>
+                        <button id="btn-switch-cam" class="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-white text-xl"><i class="fas fa-camera-rotate"></i></button>
+                    </div>
+                    <div class="p-6 pb-10 bg-gradient-to-t from-black/80 to-transparent flex flex-col items-center pointer-events-auto">
+                        <p class="text-white font-medium text-sm mb-4 bg-black/50 px-4 py-2 rounded-full backdrop-blur">Align sheet corners perfectly within brackets</p>
+                        <button id="btn-capture" class="w-20 h-20 rounded-full bg-white/30 p-2 flex items-center justify-center active:scale-95 transition-transform group shadow-2xl">
+                            <div class="w-full h-full bg-white rounded-full flex items-center justify-center text-primary-600 text-3xl"><i class="fas fa-camera"></i></div>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <nav id="bottom-nav" class="shrink-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 z-30 flex justify-around items-center h-16 px-2 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] pb-safe">
+            <button class="nav-btn flex-1 flex flex-col items-center justify-center text-gray-400 transition-colors" data-target="home"><i class="fas fa-house text-xl mb-1 nav-icon"></i><span class="text-[10px] font-bold tracking-wide uppercase">Home</span></button>
+            <button class="nav-btn flex-1 flex flex-col items-center justify-center text-gray-400 transition-colors" data-target="exams"><i class="fas fa-file-lines text-xl mb-1 nav-icon"></i><span class="text-[10px] font-bold tracking-wide uppercase">Exams</span></button>
+            <div class="flex-1 flex justify-center -mt-8 relative z-40"><button onclick="App.Controllers.Home.handleGlobalScanClick()" class="w-16 h-16 bg-primary-600 hover:bg-primary-700 rounded-full shadow-lg shadow-primary-500/40 flex items-center justify-center text-white transform active:scale-95 transition-transform border-4 border-white dark:border-gray-900"><i class="fas fa-expand text-2xl"></i></button></div>
+            <button class="nav-btn flex-1 flex flex-col items-center justify-center text-gray-400 transition-colors" data-target="sections"><i class="fas fa-users text-xl mb-1 nav-icon"></i><span class="text-[10px] font-bold tracking-wide uppercase">Sections</span></button>
+            <button class="nav-btn flex-1 flex flex-col items-center justify-center text-gray-400 transition-colors" data-target="settings"><i class="fas fa-sliders text-xl mb-1 nav-icon"></i><span class="text-[10px] font-bold tracking-wide uppercase">Settings</span></button>
+        </nav>
+    </div>
+
+    <!-- Shared Modals (Alerts/Confirm) omitted for brevity as they are standard, but keeping them functional -->
+    <div id="modal-alert" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-4"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="App.UI.hideModal('modal-alert')"></div><div class="bg-white dark:bg-gray-800 w-full max-w-sm rounded-2xl relative p-6 text-center z-10"><h3 class="text-xl font-bold mb-2" id="alert-title">Notice</h3><p class="text-gray-600 mb-6 text-sm" id="alert-message"></p><button onclick="App.UI.hideModal('modal-alert')" class="w-full py-3 bg-primary-600 text-white rounded-xl font-bold">OK</button></div></div>
+    <div id="modal-confirm" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-4"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="confirm-backdrop"></div><div class="bg-white dark:bg-gray-800 w-full max-w-sm rounded-2xl relative p-6 text-center z-10"><h3 class="text-xl font-bold mb-2" id="confirm-title">Confirm</h3><p class="text-gray-600 mb-6 text-sm" id="confirm-message"></p><div class="flex gap-3"><button id="btn-confirm-cancel" class="flex-1 py-3 bg-gray-200 text-gray-800 rounded-xl font-bold">Cancel</button><button id="btn-confirm-ok" class="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold">Proceed</button></div></div></div>
+
+    <!-- Exam Form -->
+    <div id="modal-exam-form" class="hidden fixed inset-0 z-[60] flex flex-col justify-end items-center">
+        <div class="absolute inset-0 bg-black/60" onclick="App.UI.hideModal('modal-exam-form')"></div>
+        <div class="bg-white dark:bg-gray-800 w-full max-w-md h-[90vh] rounded-t-3xl relative flex flex-col shadow-2xl">
+            <div class="p-4 border-b border-gray-100 flex justify-between items-center"><h3 class="text-xl font-bold">Create Exam</h3><button onclick="App.UI.hideModal('modal-exam-form')" class="w-8 h-8 bg-gray-200 rounded-full"><i class="fas fa-xmark"></i></button></div>
+            <div class="flex-1 overflow-y-auto p-4">
+                <div class="space-y-4">
+                    <div><label class="block text-xs font-bold text-gray-500 uppercase mb-1">Exam Title</label><input type="text" id="exam-title" class="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 outline-none font-medium"></div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><label class="block text-xs font-bold text-gray-500 uppercase mb-1">Items (1-100)</label><input type="number" id="exam-items-count" min="1" max="100" value="20" class="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 dark:bg-gray-900 outline-none"></div>
+                        <div><label class="block text-xs font-bold text-gray-500 uppercase mb-1">Default Choice Type</label><select id="exam-choices-type" class="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 dark:bg-gray-900 outline-none"><option value="4">A B C D</option><option value="5">A-E</option><option value="2">T/F</option></select></div>
+                    </div>
+                    <button onclick="App.Controllers.Exams.generateEditor()" class="w-full py-3 bg-gray-800 text-white rounded-xl font-bold flex justify-center items-center gap-2 text-sm"><i class="fas fa-list-check"></i> Setup Key & Items</button>
+                </div>
+                <div class="mt-6 hidden" id="exam-editor-section">
+                    <div class="flex justify-between items-center mb-2">
+                        <h4 class="font-bold">Configure Items</h4>
+                        <button onclick="App.Controllers.Exams.scanAnswerKey()" class="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold"><i class="fas fa-camera"></i> Scan Key</button>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-4">Set answers, or change item type to Short Answer.</p>
+                    <div id="exam-bubbles-container" class="space-y-3 pb-6"></div>
+                </div>
+            </div>
+            <div class="p-4 bg-white border-t border-gray-100 hidden" id="exam-save-section"><button onclick="App.Controllers.Exams.saveExam()" class="w-full py-4 bg-primary-600 text-white rounded-xl font-bold text-lg shadow-lg">Save Exam</button></div>
+        </div>
+    </div>
+
+    <!-- Assignment Details & Analysis -->
+    <div id="modal-assignment-details" class="hidden fixed inset-0 z-[60] flex flex-col justify-end items-center">
+        <div class="absolute inset-0 bg-black/60" onclick="App.UI.hideModal('modal-assignment-details')"></div>
+        <div class="bg-white dark:bg-gray-800 w-full max-w-md h-[85vh] rounded-t-3xl relative flex flex-col shadow-2xl">
+            <div class="p-4 border-b flex justify-between items-start bg-primary-600 text-white rounded-t-3xl">
+                <div><h3 class="text-xl font-bold" id="detail-exam-name">Exam Name</h3><p class="text-sm opacity-90" id="detail-section-name">Section Name</p></div>
+                <button onclick="App.UI.hideModal('modal-assignment-details')" class="w-8 h-8 bg-white/20 rounded-full"><i class="fas fa-xmark"></i></button>
+            </div>
+            <div class="p-4 grid grid-cols-3 gap-3 bg-gray-50 border-b">
+                <div class="bg-white p-3 rounded-xl shadow-sm text-center"><div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Scanned</div><div class="text-2xl font-black text-blue-600" id="detail-stat-scanned">0</div></div>
+                <div class="bg-white p-3 rounded-xl shadow-sm text-center"><div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Avg Score</div><div class="text-2xl font-black text-purple-600" id="detail-stat-avg">0%</div></div>
+                <div class="bg-white p-3 rounded-xl shadow-sm text-center"><div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Passed</div><div class="text-2xl font-black text-green-600" id="detail-stat-pass">0</div></div>
+            </div>
+            <div class="p-4 grid grid-cols-2 gap-2 border-b">
+                <button onclick="App.Controllers.Home.exportAssignmentResults()" class="py-2 bg-green-100 text-green-700 rounded-xl font-bold text-xs"><i class="fas fa-file-csv"></i> Export Results</button>
+                <button onclick="App.Controllers.Home.exportItemAnalysis()" class="py-2 bg-purple-100 text-purple-700 rounded-xl font-bold text-xs"><i class="fas fa-chart-line"></i> Item Analysis</button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 bg-gray-50">
+                <div class="flex justify-between items-center mb-3">
+                    <h4 class="text-sm font-bold text-gray-500 uppercase">Scan Results</h4>
+                    <select class="text-xs border rounded p-1 bg-white outline-none" onchange="App.Controllers.Home.renderResults(this.value)">
+                        <option value="roll">Sort by Roll</option>
+                        <option value="name">Sort by Name</option>
+                        <option value="score">Sort by Score</option>
+                    </select>
+                </div>
+                <div id="detail-results-list" class="space-y-2 pb-6"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- OMR Scan Review Modal -->
+    <div id="modal-scan-review" class="hidden fixed inset-0 z-[70] flex flex-col justify-end items-center">
+        <div class="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
+        <div class="bg-white dark:bg-gray-800 w-full max-w-md rounded-t-3xl relative flex flex-col shadow-2xl overflow-hidden animate-slide-up">
+            <div class="bg-gray-900 p-2 text-center text-white relative">
+                <canvas id="review-canvas" class="w-full h-[30vh] object-contain rounded-lg border border-gray-700"></canvas>
+                <div class="absolute top-4 right-4 bg-black/70 px-3 py-1 rounded-full text-lg font-black"><span id="review-score">0/0</span></div>
+                <div class="absolute top-4 left-4 bg-primary-600 px-3 py-1 rounded-full text-sm font-bold shadow">Roll: <span id="review-roll">--</span></div>
+            </div>
+            
+            <div class="p-2 bg-primary-100 text-primary-800 text-xs text-center font-bold">Tap an answer to manually edit it if misread.</div>
+            <div class="p-4 bg-gray-50 dark:bg-gray-900 max-h-[35vh] overflow-y-auto space-y-2" id="review-item-breakdown"></div>
+            
+            <div class="p-4 bg-white border-t flex gap-3">
+                <button onclick="App.Scanner.resnap()" class="flex-1 py-3 bg-gray-200 rounded-xl font-bold"><i class="fas fa-rotate-right"></i> Resnap</button>
+                <button onclick="App.Scanner.saveAndNext()" class="flex-[1.5] py-3 bg-primary-600 text-white rounded-xl font-bold shadow-lg">Save & Next <i class="fas fa-arrow-right"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Simplified forms to save space, keeping sections manageable -->
+    <div id="modal-section-form" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-4"><div class="absolute inset-0 bg-black/60" onclick="App.UI.hideModal('modal-section-form')"></div><div class="bg-white w-full max-w-sm rounded-2xl relative p-6"><h3 class="text-xl font-bold mb-4">Create Section</h3><input type="hidden" id="section-id"><input type="text" id="section-name" class="w-full px-4 py-3 mb-6 rounded-xl border bg-gray-50" placeholder="e.g. 10 Newton"><div class="flex gap-3"><button onclick="App.UI.hideModal('modal-section-form')" class="flex-1 py-3 bg-gray-200 font-bold rounded-xl">Cancel</button><button onclick="App.Controllers.Sections.saveSection()" class="flex-1 py-3 bg-primary-600 text-white rounded-xl font-bold">Save</button></div></div></div>
+    
+    <div id="modal-assign-form" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-4"><div class="absolute inset-0 bg-black/60" onclick="App.UI.hideModal('modal-assign-form')"></div><div class="bg-white w-full max-w-sm rounded-2xl relative p-6"><h3 class="text-xl font-bold mb-4">Assign Exam</h3><select id="assign-exam-select" class="w-full px-4 py-3 mb-4 rounded-xl border bg-gray-50"></select><select id="assign-section-select" class="w-full px-4 py-3 mb-6 rounded-xl border bg-gray-50"></select><div class="flex gap-3"><button onclick="App.UI.hideModal('modal-assign-form')" class="flex-1 py-3 bg-gray-200 font-bold rounded-xl">Cancel</button><button onclick="App.Controllers.Home.saveAssignment()" class="flex-1 py-3 bg-primary-600 text-white rounded-xl font-bold">Assign</button></div></div></div>
+    
+    <!-- Help Modal -->
+    <div id="modal-help" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-4"><div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="App.UI.hideModal('modal-help')"></div><div class="bg-white dark:bg-gray-800 w-full max-w-md rounded-2xl relative p-6 z-10 max-h-[80vh] overflow-y-auto"><h3 class="text-xl font-bold mb-4 border-b pb-2">How to Use SnapGrade</h3><div class="space-y-4 text-sm text-gray-600 dark:text-gray-300"><p><strong>1. Sections:</strong> Go to the Sections tab to create a class. Click the section to manually add students or bulk import them via CSV.</p><p><strong>2. Exams:</strong> Go to Exams to create an answer key. Set the number of items and tap the bubbles to set the correct answers. You can also print the OMR sheet from here.</p><p><strong>3. Assign:</strong> On the Home tab, tap "Assign" to link an Exam to a Section.</p><p><strong>4. Scan:</strong> Tap "Scan Papers" on your assignment. Align the 4 square markers on the printed OMR sheet within the camera brackets. The app will auto-detect and grade.</p><p><strong>5. Review & Export:</strong> Click the assignment on the Home tab to see results, edit them, and export detailed item analysis.</p></div><button onclick="App.UI.hideModal('modal-help')" class="w-full mt-6 py-3 bg-primary-600 text-white rounded-xl font-bold">Got it!</button></div></div>
+
+    <!-- Student Form Modal -->
+    <div id="modal-student-form" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-4"><div class="absolute inset-0 bg-black/60" onclick="App.UI.hideModal('modal-student-form')"></div><div class="bg-white w-full max-w-sm rounded-2xl relative p-6"><h3 class="text-xl font-bold mb-4" id="student-form-title">Add Student</h3><input type="hidden" id="student-id"><div class="flex gap-3 mb-4"><div class="w-1/3"><label class="block text-xs font-bold text-gray-500 mb-1">Roll (01-99)</label><input type="text" id="student-roll" maxlength="2" class="w-full px-3 py-2 rounded-lg border bg-gray-50 text-center" placeholder="01"></div><div class="flex-1"><label class="block text-xs font-bold text-gray-500 mb-1">Full Name</label><input type="text" id="student-name" class="w-full px-3 py-2 rounded-lg border bg-gray-50" placeholder="e.g. John Doe"></div></div><div class="flex gap-3"><button onclick="App.UI.hideModal('modal-student-form')" class="flex-1 py-3 bg-gray-200 font-bold rounded-xl">Cancel</button><button onclick="App.Controllers.Students.saveStudent()" class="flex-1 py-3 bg-primary-600 text-white rounded-xl font-bold">Save</button></div></div></div>
+
+    <!-- Bulk Import Modal -->
+    <div id="modal-bulk-import" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-4"><div class="absolute inset-0 bg-black/60" onclick="App.UI.hideModal('modal-bulk-import')"></div><div class="bg-white w-full max-w-sm rounded-2xl relative p-6"><h3 class="text-xl font-bold mb-2">Bulk Import Students</h3><p class="text-xs text-gray-500 mb-4">Paste format: <code>RollNo, Full Name</code> (e.g., 01, Juan Dela Cruz)</p><textarea id="bulk-import-data" class="w-full h-32 p-3 rounded-lg border bg-gray-50 mb-4 text-sm" placeholder="01, Juan Dela Cruz&#10;02, Maria Santos"></textarea><div class="flex gap-3"><button onclick="App.UI.hideModal('modal-bulk-import')" class="flex-1 py-3 bg-gray-200 font-bold rounded-xl">Cancel</button><button onclick="App.Controllers.Students.processBulkImport()" class="flex-1 py-3 bg-primary-600 text-white rounded-xl font-bold">Import</button></div></div></div>
+
+    <div id="toast-container" class="fixed top-4 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none w-[90%] max-w-sm"></div>
+
+    <script>
+        const $ = id => document.getElementById(id);
+        const $$ = selector => document.querySelectorAll(selector);
+        
+        class AppDB {
+            constructor() { this.prefix = 'SnapGradeV3_'; }
+            async init() {
+                if (!localStorage.getItem(this.prefix + 'settings')) this._saveData('settings', { threshold: 128, sensitivity: 40 });
+                ['exams','sections','students','assignments','results'].forEach(s => { if(!localStorage.getItem(this.prefix+s)) this._saveData(s, []); });
+            }
+            _getData(storeName) { const d = localStorage.getItem(this.prefix + storeName); return d ? JSON.parse(d) : null; }
+            _saveData(storeName, data) { localStorage.setItem(this.prefix + storeName, JSON.stringify(data)); }
+            async put(storeName, data) { const list = this._getData(storeName); const idx = list.findIndex(i => i.id === data.id); if (idx >= 0) list[idx] = data; else list.push(data); this._saveData(storeName, list); return data; }
+            async get(storeName, id) { return this._getData(storeName).find(i => i.id === id); }
+            async getByIndex(storeName, indexName, value) { return this._getData(storeName).filter(i => i[indexName] === value); }
+            async getAll(storeName) { return this._getData(storeName); }
+            async delete(storeName, id) { this._saveData(storeName, this._getData(storeName).filter(i => i.id !== id)); }
+            getSettings() { return this._getData('settings'); }
+            saveSettings(s) { this._saveData('settings', s); }
+            async clearAll() { Object.keys(localStorage).forEach(k => { if(k.startsWith(this.prefix)) localStorage.removeItem(k); }); window.location.reload(); }
+        }
+
+        class UIManager {
+            constructor() { this.setupNavigation(); this.setupTheme(); }
+            setupNavigation() {
+                $$('.nav-btn').forEach(btn => btn.addEventListener('click', e => this.navigate(e.currentTarget.dataset.target)));
+                $('search-exams').addEventListener('input', () => App.Controllers.Exams.renderList());
+                $('search-sections').addEventListener('input', () => App.Controllers.Sections.renderList());
+            }
+            navigate(viewId) {
+                if(viewId === 'scanner') { $('main-header').classList.add('hidden'); $('bottom-nav').classList.add('hidden'); }
+                else { if(App.Scanner) App.Scanner.stop(); $('main-header').classList.remove('hidden'); $('bottom-nav').classList.remove('hidden'); }
+                $$('.app-view').forEach(v => { v.classList.add('hidden'); v.classList.remove('flex', 'block'); });
+                const v = $(`view-${viewId}`);
+                if(v) { v.classList.remove('hidden'); v.classList.add(viewId === 'scanner' ? 'block' : 'flex'); }
+                
+                $$('.nav-btn').forEach(b => { 
+                    const target = viewId === 'section-details' ? 'sections' : viewId;
+                    b.classList.toggle('text-primary-600', b.dataset.target === target); 
+                    b.classList.toggle('text-gray-400', b.dataset.target !== target); 
+                });
+                
+                if(viewId === 'home') App.Controllers.Home.renderList();
+                if(viewId === 'exams') App.Controllers.Exams.renderList();
+                if(viewId === 'sections') App.Controllers.Sections.renderList();
+                if(viewId === 'settings') App.Controllers.Settings.load();
+            }
+            setupTheme() { document.documentElement.classList.toggle('dark', localStorage.getItem('theme') === 'dark'); $('themeToggle').addEventListener('click', () => { document.documentElement.classList.toggle('dark'); localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light'); }); }
+            toast(msg, type = 'info') {
+                const el = document.createElement('div');
+                el.className = `px-4 py-3 rounded-xl shadow-xl text-sm font-bold flex items-center gap-3 animate-slide-up text-white ${type==='success'?'bg-green-600':type==='error'?'bg-red-600':'bg-gray-800'}`;
+                el.innerHTML = msg; $('toast-container').appendChild(el);
+                setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.3s'; setTimeout(() => el.remove(), 300); }, 3000);
+            }
+            showModal(id) { const m = $(id); if(m) m.classList.remove('hidden'); }
+            hideModal(id) { const m = $(id); if(m) m.classList.add('hidden'); }
+            showAlert(msg, title="Notice") { $('alert-title').innerText = title; $('alert-message').innerText = msg; this.showModal('modal-alert'); }
+        }
+
+        class OMRProcessor {
+            constructor(width = 800, height = 1000) {
+                this.vW = width; this.vH = height; // Virtual coordinate system exactly matching print generator
+            }
+            
+            // Map the video frame's bracket region into a virtual 800x1000 canvas for exact processing
+            extractOMRImage(video, guideEl) {
+                const guideRect = guideEl.getBoundingClientRect();
+                const videoRect = video.getBoundingClientRect();
+                
+                // Calculate physical crop box relative to intrinsic video size
+                const scaleX = video.videoWidth / videoRect.width;
+                const scaleY = video.videoHeight / videoRect.height;
+                const cropX = (guideRect.left - videoRect.left) * scaleX;
+                const cropY = (guideRect.top - videoRect.top) * scaleY;
+                const cropW = guideRect.width * scaleX;
+                const cropH = guideRect.height * scaleY;
+
+                const cvs = document.createElement('canvas');
+                cvs.width = this.vW; cvs.height = this.vH;
+                const ctx = cvs.getContext('2d', { willReadFrequently: true });
+                ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, this.vW, this.vH);
+                return { canvas: cvs, ctx: ctx };
+            }
+
+            process(canvas, ctx, examConfig, settings) {
+                const imgData = ctx.getImageData(0, 0, this.vW, this.vH);
+                const d = imgData.data;
+                const thresh = settings.threshold;
+                const fillThresh = settings.sensitivity / 100;
+
+                // Thresholding function
+                const isDark = (x, y) => {
+                    if (x<0||y<0||x>=this.vW||y>=this.vH) return false;
+                    const i = (y * this.vW + x) * 4;
+                    const gray = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+                    return gray < thresh;
+                };
+
+                const checkBubble = (cx, cy, r=12) => {
+                    let dark = 0, total = 0;
+                    for(let y=cy-r; y<=cy+r; y++) {
+                        for(let x=cx-r; x<=cx+r; x++) {
+                            if ((x-cx)**2 + (y-cy)**2 <= r**2) {
+                                total++;
+                                if (isDark(x, y)) dark++;
+                            }
+                        }
+                    }
+                    return (dark / total) >= fillThresh;
+                };
+
+                // Grid mapping matching Print Generator EXACTLY
+                let rollNo = 0;
+                for(let col=0; col<2; col++) {
+                    const bx = 600 + col*50;
+                    let foundDigit = 0;
+                    for(let r=0; r<10; r++) {
+                        if (checkBubble(bx, 100 + r*30)) { foundDigit = r; break; }
+                    }
+                    rollNo = rollNo * 10 + foundDigit;
+                }
+
+                let details = [];
+                let score = 0;
+                
+                // OCR short answers extraction queue
+                let shortAnswersQueue = [];
+
+                for(let i=1; i<=examConfig.items.length; i++) {
+                    const itemConf = examConfig.items[i-1];
+                    const col = Math.floor((i - 1) / 25);
+                    const row = (i - 1) % 25;
+                    const colOffsets = [40, 230, 420, 610];
+                    const baseX = colOffsets[col];
+                    const baseY = 200 + row * 30;
+
+                    if (itemConf.type === 'mcq') {
+                        let selectedIdx = -1;
+                        for(let c=0; c<itemConf.options; c++) {
+                            if (checkBubble(baseX + c*40, baseY)) { selectedIdx = c; break; } // Pick first filled
+                        }
+                        
+                        const isCorrect = (selectedIdx === itemConf.key);
+                        if(isCorrect) score++;
+                        const labels = itemConf.options === 2 ? ['T','F'] : ['A','B','C','D','E'];
+                        details.push({
+                            item: i, type: 'mcq',
+                            keyIdx: itemConf.key, keyLabel: labels[itemConf.key] || '?',
+                            ansIdx: selectedIdx, ansLabel: selectedIdx >= 0 ? labels[selectedIdx] : 'None',
+                            correct: isCorrect,
+                            x: baseX + selectedIdx*40, y: baseY
+                        });
+                    } else if (itemConf.type === 'short') {
+                        // Extract rect for OCR
+                        shortAnswersQueue.push({
+                            item: i, keyTxt: itemConf.key,
+                            x: baseX, y: baseY-15, w: 250, h: 30
+                        });
+                        details.push({ item: i, type: 'short', keyTxt: itemConf.key, ansTxt: 'Processing...', correct: false });
+                    }
+                }
+
+                return { rollNo: rollNo.toString().padStart(2, '0'), score, total: examConfig.items.length, details, shortAnswersQueue };
+            }
+        }
+
+        class ScannerEngine {
+            constructor() {
+                this.video = $('videoElement'); this.facingMode = 'environment';
+                this.scanMode = 'student'; // 'student' or 'key'
+                $('btn-start-camera').addEventListener('click', () => this._openCamera());
+                $('btn-capture').addEventListener('click', () => this.capture());
+                $('btn-switch-cam').addEventListener('click', () => this.switchCamera());
+                this.processor = new OMRProcessor();
+                this.worker = null;
+            }
+
+            async start(assignment, mode = 'student') {
+                this.scanMode = mode;
+                if(mode === 'student') {
+                    if(!assignment) return;
+                    this.currentAssignment = assignment;
+                    this.currentExam = await App.db.get('exams', assignment.examId);
+                    const section = await App.db.get('sections', assignment.sectionId);
+                    $('scanner-active-assignment-name').innerText = `${this.currentExam.title} - ${section.name}`;
+                } else if (mode === 'key') {
+                    $('scanner-active-assignment-name').innerText = "Scanning Answer Key...";
+                }
+                
+                App.navigate('scanner'); App.UI.hideModal('modal-scan-review');
+                await this._openCamera();
+            }
+
+            _cameraErrorMessage(err) {
+                if (!window.isSecureContext) {
+                    return "Camera access requires HTTPS (or localhost). This page was opened over an insecure connection (e.g. a local file or plain http://), so browsers block camera access here. Serve this file from a local server or hosting provider with HTTPS.";
+                }
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    return "This browser doesn't support camera access (getUserMedia unavailable). Try a recent version of Chrome, Safari, or Firefox.";
+                }
+                switch (err && err.name) {
+                    case 'NotAllowedError':
+                    case 'PermissionDeniedError':
+                        return "Camera permission was denied. Check your browser's site settings and allow camera access for this page, then tap 'Request Access' again.";
+                    case 'NotFoundError':
+                    case 'DevicesNotFoundError':
+                        return "No camera was found on this device.";
+                    case 'NotReadableError':
+                    case 'TrackStartError':
+                        return "The camera is already in use by another app or tab. Close other apps using the camera and try again.";
+                    case 'OverconstrainedError':
+                        return "This device's camera doesn't support the requested settings. Trying the other camera may help.";
+                    default:
+                        return "Could not access the camera: " + (err && err.message ? err.message : "Unknown error") + ". Please allow camera permissions in your browser.";
+                }
+            }
+
+            async _openCamera() {
+                try {
+                    this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: this.facingMode, advanced: [{ focusMode: "continuous" }] } });
+                    this.video.srcObject = this.stream;
+                    $('camera-start-overlay').style.display = 'none';
+                } catch (err) {
+                    console.error("Camera error:", err);
+                    $('camera-start-overlay').style.display = 'flex';
+                    $('camera-start-overlay').querySelector('p').innerText = this._cameraErrorMessage(err);
+                }
+            }
+            
+            stop() { if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; } }
+
+            async switchCamera() {
+                this.facingMode = this.facingMode === 'environment' ? 'user' : 'environment';
+                this.stop();
+                await this._openCamera();
+            }
+            
+            async initOCR() {
+                if(!this.worker) {
+                    App.UI.toast("Initializing AI Engine...", "info");
+                    this.worker = await Tesseract.createWorker('eng');
+                }
+            }
+
+            async capture() {
+                const btn = $('btn-capture'); btn.innerHTML = `<div class="w-full h-full bg-white rounded-full flex items-center justify-center text-primary-600"><div class="loader"></div></div>`;
+                
+                // Give UI time to update
+                setTimeout(async () => {
+                    try {
+                        const { canvas, ctx } = this.processor.extractOMRImage(this.video, $('scanner-guide'));
+                        const settings = App.db.getSettings();
+                        
+                        // IF SCANNING KEY
+                        if(this.scanMode === 'key') {
+                            const result = this.processor.process(canvas, ctx, { items: App.Controllers.Exams.currentExamItems }, settings);
+                            result.details.forEach((d, idx) => {
+                                if(d.type === 'mcq' && d.ansIdx >= 0) {
+                                    App.Controllers.Exams.currentExamItems[idx].key = d.ansIdx;
+                                }
+                            });
+                            App.Controllers.Exams.renderEditorItems();
+                            this.stop();
+                            App.navigate('exams');
+                            App.UI.toast("Answer Key scanned successfully!", "success");
+                            return;
+                        }
+
+                        // Normal Student Scan
+                        const result = this.processor.process(canvas, ctx, this.currentExam, settings);
+                        
+                        this.tempResult = result;
+                        this.tempResult.assignmentId = this.currentAssignment.id;
+                        this.tempResult.timestamp = Date.now();
+                        this.tempCanvas = canvas;
+
+                        if(result.shortAnswersQueue.length > 0) {
+                            await this.initOCR();
+                            for(let q of result.shortAnswersQueue) {
+                                // Crop just the short answer box
+                                const c = document.createElement('canvas'); c.width = q.w; c.height = q.h;
+                                c.getContext('2d').putImageData(ctx.getImageData(q.x, q.y, q.w, q.h), 0, 0);
+                                const { data: { text } } = await this.worker.recognize(c);
+                                const cleanTxt = text.trim().toLowerCase();
+                                const keys = q.keyTxt.toLowerCase().split(',').map(k=>k.trim());
+                                const isCorrect = keys.some(k => cleanTxt.includes(k) && k.length > 0);
+                                
+                                const det = this.tempResult.details.find(d => d.item === q.item);
+                                det.ansTxt = cleanTxt || 'None';
+                                det.correct = isCorrect;
+                                if(isCorrect) this.tempResult.score++;
+                            }
+                        }
+                        
+                        this.tempResult.percent = Math.round((this.tempResult.score / this.tempResult.total) * 100);
+                        this.showReviewModal();
+                    } catch(e) {
+                        App.UI.toast("Processing failed. Please try again.", "error");
+                        console.error(e);
+                    } finally {
+                        btn.innerHTML = `<div class="w-full h-full bg-white rounded-full flex items-center justify-center text-primary-600 text-3xl"><i class="fas fa-camera"></i></div>`;
+                    }
+                }, 100);
+            }
+
+            showReviewModal() {
+                $('review-score').innerText = `${this.tempResult.score}/${this.tempResult.total}`;
+                $('review-roll').innerText = this.tempResult.rollNo;
+                
+                // Draw Overlay Image
+                const rcvs = $('review-canvas');
+                rcvs.width = this.processor.vW; rcvs.height = this.processor.vH;
+                const rctx = rcvs.getContext('2d');
+                rctx.drawImage(this.tempCanvas, 0, 0);
+                rctx.lineWidth = 4;
+                
+                const breakdown = $('review-item-breakdown'); breakdown.innerHTML = '';
+                const labels = ['A','B','C','D','E'];
+                
+                this.tempResult.details.forEach((d, idx) => {
+                    // Draw visual feedback
+                    if(d.type === 'mcq') {
+                        rctx.beginPath();
+                        if(d.correct) { rctx.strokeStyle = '#10b981'; rctx.arc(d.x, d.y, 16, 0, Math.PI*2); }
+                        else if(d.ansIdx >= 0) { rctx.strokeStyle = '#ef4444'; rctx.arc(d.x, d.y, 16, 0, Math.PI*2); }
+                        rctx.stroke();
+                    }
+
+                    // Build UI Editor
+                    if(d.type === 'mcq') {
+                        const itemConf = this.currentExam.items[idx];
+                        const opts = Array.from({length: itemConf.options}).map((_, i) => 
+                            `<button onclick="App.Scanner.editItem(${d.item}, ${i})" class="px-2 py-1 text-xs rounded border ${d.ansIdx===i ? (d.correct?'bg-green-100 border-green-500':'bg-red-100 border-red-500') : 'bg-gray-100'}">${labels[i]}</button>`
+                        ).join('');
+                        breakdown.innerHTML += `<div class="flex justify-between items-center py-2 border-b text-sm"><div class="font-bold w-6 text-gray-500">${d.item}.</div><div class="flex-1 flex gap-1">${opts}</div><div class="text-xs text-gray-400">Key: ${d.keyLabel}</div></div>`;
+                    } else {
+                        breakdown.innerHTML += `<div class="flex justify-between items-center py-2 border-b text-sm"><div class="font-bold w-6 text-gray-500">${d.item}.</div><div class="flex-1 pr-2"><input type="text" value="${d.ansTxt}" class="w-full text-xs p-1 border rounded" onchange="App.Scanner.editShortItem(${d.item}, this.value)"></div><div><button onclick="App.Scanner.toggleCorrect(${d.item})" class="${d.correct?'text-green-500':'text-red-500'}"><i class="fas fa-${d.correct?'check':'times'}-circle"></i></button></div></div>`;
+                    }
+                });
+
+                App.UI.showModal('modal-scan-review');
+            }
+            
+            recalcScore() {
+                this.tempResult.score = this.tempResult.details.filter(d => d.correct).length;
+                this.tempResult.percent = Math.round((this.tempResult.score / this.tempResult.total) * 100);
+                this.showReviewModal(); // Re-render
+            }
+
+            editItem(itemNum, newAnsIdx) {
+                const d = this.tempResult.details.find(x => x.item === itemNum);
+                const itemConf = this.currentExam.items[itemNum-1];
+                const labels = itemConf.options === 2 ? ['T','F'] : ['A','B','C','D','E'];
+                d.ansIdx = newAnsIdx; d.ansLabel = labels[newAnsIdx];
+                d.correct = (d.ansIdx === d.keyIdx);
+                this.recalcScore();
+            }
+            editShortItem(itemNum, val) {
+                const d = this.tempResult.details.find(x => x.item === itemNum); d.ansTxt = val;
+            }
+            toggleCorrect(itemNum) {
+                const d = this.tempResult.details.find(x => x.item === itemNum); d.correct = !d.correct; this.recalcScore();
+            }
+
+            resnap() { this.tempResult = null; App.UI.hideModal('modal-scan-review'); }
+            async saveAndNext() {
+                if(this.tempResult) {
+                    await App.db.put('results', { ...this.tempResult }); // Save copy
+                    App.UI.toast(`Saved Result for Roll No: ${this.tempResult.rollNo}`, "success");
+                }
+                this.resnap();
+            }
+        }
+
+        const Controllers = {
+            Home: {
+                currentAssignment: null,
+                async handleGlobalScanClick() {
+                    const assignments = await App.db.getAll('assignments');
+                    if (assignments.length === 0) {
+                        App.UI.showAlert("No active assignments found. Please assign an exam first.", "No Assignments");
+                        App.navigate('home');
+                    } else if (assignments.length === 1) {
+                        App.Scanner.start(assignments[0]);
+                    } else {
+                        App.navigate('home');
+                        App.UI.toast("Please tap 'Scan Papers' on the specific assignment below.", "info");
+                    }
+                },
+                async renderList() {
+                    const exams = await App.db.getAll('exams'); const sections = await App.db.getAll('sections'); const assignments = await App.db.getAll('assignments');
+                    $('stat-active-exams').innerText = exams.length; $('stat-total-sections').innerText = sections.length;
+                    const list = $('home-assignments-list'); list.innerHTML = '';
+                    if(assignments.length === 0) { list.innerHTML = `<div class="text-center text-gray-500 py-10">No Assignments Yet</div>`; return; }
+                    assignments.forEach(a => {
+                        const e = exams.find(x => x.id === a.examId); const s = sections.find(x => x.id === a.sectionId);
+                        list.innerHTML += `<div onclick='App.Controllers.Home.openDetails("${a.id}")' class="bg-white p-4 rounded-xl shadow-sm border mb-3 cursor-pointer"><div class="flex justify-between mb-3"><div><h4 class="font-bold">${e?.title||'Unknown'}</h4><p class="text-xs text-gray-500">${s?.name||'Unknown'}</p></div></div><button onclick='event.stopPropagation(); App.Scanner.start(${JSON.stringify(a)})' class="w-full py-2 bg-primary-100 text-primary-700 font-bold rounded-lg text-sm"><i class="fas fa-camera"></i> Scan Papers</button></div>`;
+                    });
+                },
+                async showAssignModal() {
+                    const exams = await App.db.getAll('exams'); const sections = await App.db.getAll('sections');
+                    $('assign-exam-select').innerHTML = exams.map(e => `<option value="${e.id}">${e.title}</option>`).join('');
+                    $('assign-section-select').innerHTML = sections.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+                    App.UI.showModal('modal-assign-form');
+                },
+                async saveAssignment() { await App.db.put('assignments', { id: 'ass_'+Date.now(), examId: $('assign-exam-select').value, sectionId: $('assign-section-select').value }); App.UI.hideModal('modal-assign-form'); this.renderList(); },
+                async openDetails(id) {
+                    const a = await App.db.get('assignments', id); this.currentAssignment = a;
+                    const exam = await App.db.get('exams', a.examId); const sec = await App.db.get('sections', a.sectionId);
+                    $('detail-exam-name').innerText = exam.title; $('detail-section-name').innerText = sec.name;
+                    await this.renderResults(); App.UI.showModal('modal-assignment-details');
+                },
+                async renderResults(sortBy = 'roll') {
+                    const results = await App.db.getByIndex('results', 'assignmentId', this.currentAssignment.id);
+                    const students = await App.db.getByIndex('students', 'sectionId', this.currentAssignment.sectionId);
+                    
+                    let totalScore = 0, passCount = 0;
+                    results.forEach(r => { totalScore += r.percent; if(r.percent >= 50) passCount++; });
+                    $('detail-stat-scanned').innerText = results.length;
+                    $('detail-stat-avg').innerText = results.length ? Math.round(totalScore/results.length) + '%' : '0%';
+                    $('detail-stat-pass').innerText = passCount;
+                    
+                    const mappedResults = results.map(r => {
+                        const student = students.find(s => s.rollNo === r.rollNo);
+                        return { ...r, studentName: student ? student.name : 'Unknown Student' };
+                    });
+                    
+                    if(sortBy === 'roll') mappedResults.sort((a,b)=>parseInt(a.rollNo)-parseInt(b.rollNo));
+                    else if(sortBy === 'name') mappedResults.sort((a,b)=>a.studentName.localeCompare(b.studentName));
+                    else if(sortBy === 'score') mappedResults.sort((a,b)=>b.score - a.score);
+
+                    const list = $('detail-results-list'); list.innerHTML = mappedResults.length === 0 ? '<div class="text-xs text-gray-500 text-center p-4">No scans yet.</div>' : '';
+                    mappedResults.forEach(r => {
+                        list.innerHTML += `<div class="bg-white p-3 rounded-xl flex justify-between items-center shadow-sm border mb-2"><div class="flex flex-col"><div class="font-bold text-sm">${r.studentName}</div><div class="text-xs text-gray-500">Roll: ${r.rollNo}</div></div><div class="font-black text-lg ${r.percent>=50?'text-green-600':'text-red-600'}">${r.score}/${r.total}</div></div>`;
+                    });
+                },
+                async exportAssignmentResults() {
+                    const results = await App.db.getByIndex('results', 'assignmentId', this.currentAssignment.id);
+                    const students = await App.db.getByIndex('students', 'sectionId', this.currentAssignment.sectionId);
+                    
+                    if(results.length===0) return App.UI.toast("No results");
+                    let csv = "Roll No,Student Name,Score,Total,Percent";
+                    const itemLen = results[0].details.length;
+                    for(let i=1; i<=itemLen; i++) csv += `,Item ${i}`;
+                    csv += "\n";
+                    results.forEach(r => {
+                        const student = students.find(s => s.rollNo === r.rollNo);
+                        const sName = student ? student.name : 'Unknown';
+                        let row = `${r.rollNo},"${sName}",${r.score},${r.total},${r.percent}%`;
+                        r.details.forEach(d => { row += `,${d.type==='mcq'?d.ansLabel: `"${d.ansTxt}"`}`; });
+                        csv += row + "\n";
+                    });
+                    this.downloadFile(csv, 'Results.csv');
+                },
+                async exportItemAnalysis() {
+                    const results = await App.db.getByIndex('results', 'assignmentId', this.currentAssignment.id);
+                    if(results.length < 5) return App.UI.showAlert("Need at least 5 scans for reliable analysis.");
+                    results.sort((a,b) => b.score - a.score);
+                    const t = results.length; const groupSz = Math.max(1, Math.floor(t * 0.27));
+                    const upper = results.slice(0, groupSz); const lower = results.slice(t - groupSz);
+                    
+                    let csv = "Item,Difficulty Index (p),Discrimination Index (d),Conclusion\n";
+                    const itemLen = results[0].details.length;
+                    for(let i=1; i<=itemLen; i++) {
+                        let totC = 0, upC = 0, lowC = 0;
+                        results.forEach(r => { if(r.details[i-1].correct) totC++; });
+                        upper.forEach(r => { if(r.details[i-1].correct) upC++; });
+                        lower.forEach(r => { if(r.details[i-1].correct) lowC++; });
+                        
+                        const p = totC / t;
+                        const d = (upC - lowC) / groupSz;
+                        let conc = p < 0.2 ? "Too Hard" : p > 0.8 ? "Too Easy" : "Good";
+                        if(d < 0.2) conc += " (Poor Discrimination)";
+                        csv += `${i},${p.toFixed(2)},${d.toFixed(2)},${conc}\n`;
+                    }
+                    this.downloadFile(csv, 'Item_Analysis.csv');
+                },
+                downloadFile(c, f) { const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([c], {type:'text/csv'})); a.download=f; a.click(); }
+            },
+            Exams: {
+                currentExamItems: [],
+                async renderList() {
+                    const q = ($('search-exams').value || '').trim().toLowerCase();
+                    let exams = await App.db.getAll('exams');
+                    if(q) exams = exams.filter(e => e.title.toLowerCase().includes(q));
+                    const list = $('exams-list'); list.innerHTML = '';
+                    if(exams.length === 0) { list.innerHTML = `<div class="text-center text-gray-500 py-10">No exams found</div>`; return; }
+                    exams.forEach(e => {
+                        list.innerHTML += `<div class="bg-white p-4 rounded-xl shadow-sm border mb-2 flex justify-between items-center"><div><h4 class="font-bold">${e.title}</h4><div class="text-xs text-gray-500">${e.items.length} Items</div></div><div class="flex gap-2"><button onclick="App.Controllers.Exams.printOMR('${e.id}')" class="w-8 h-8 rounded bg-gray-100 text-gray-700" title="Print OMR"><i class="fas fa-print"></i></button><button onclick="App.Controllers.Exams.deleteExam('${e.id}')" class="w-8 h-8 rounded bg-red-100 text-red-500"><i class="fas fa-trash"></i></button></div></div>`;
+                    });
+                },
+                generateEditor() {
+                    let count = parseInt($('exam-items-count').value) || 20;
+                    const type = parseInt($('exam-choices-type').value);
+                    const container = $('exam-bubbles-container'); container.innerHTML = '';
+                    this.currentExamItems = Array.from({length: count}).map(() => ({ type: 'mcq', options: type, key: 0 }));
+                    
+                    this.renderEditorItems();
+                    $('exam-editor-section').classList.remove('hidden'); $('exam-save-section').classList.remove('hidden');
+                },
+                renderEditorItems() {
+                    const container = $('exam-bubbles-container'); container.innerHTML = '';
+                    this.currentExamItems.forEach((item, idx) => {
+                        const isMCQ = item.type === 'mcq';
+                        let inputHTML = '';
+                        if(isMCQ) {
+                            const labels = item.options === 2 ? ['T','F'] : ['A','B','C','D','E'];
+                            inputHTML = Array.from({length: item.options}).map((_, i) => `<div class="omr-bubble ${item.key===i?'selected':''}" onclick="App.Controllers.Exams.setKey(${idx}, ${i})">${labels[i]}</div>`).join('');
+                        } else {
+                            inputHTML = `<input type="text" placeholder="Keywords (comma separated)" class="flex-1 px-2 py-1 text-xs border rounded" value="${item.key||''}" onchange="App.Controllers.Exams.setShortKey(${idx}, this.value)">`;
+                        }
+                        
+                        container.innerHTML += `
+                            <div class="flex items-center gap-2 bg-white p-2 rounded border text-sm">
+                                <div class="w-6 font-bold text-gray-500">${idx+1}.</div>
+                                <select class="text-xs border rounded outline-none bg-gray-50" onchange="App.Controllers.Exams.toggleType(${idx}, this.value)">
+                                    <option value="mcq" ${isMCQ?'selected':''}>MCQ</option>
+                                    <option value="short" ${!isMCQ?'selected':''}>Short Ans</option>
+                                </select>
+                                <div class="flex-1 flex gap-1">${inputHTML}</div>
+                            </div>
+                        `;
+                    });
+                },
+                toggleType(idx, val) { this.currentExamItems[idx].type = val; this.currentExamItems[idx].key = val==='mcq'?0:''; this.renderEditorItems(); },
+                setKey(idx, val) { this.currentExamItems[idx].key = val; this.renderEditorItems(); },
+                setShortKey(idx, val) { this.currentExamItems[idx].key = val; },
+                scanAnswerKey() {
+                    // Hijack scanner to read answer key
+                    App.Scanner.start(null, 'key');
+                },
+                async saveExam() {
+                    if(!$('exam-title').value) return App.UI.toast("Enter exam title");
+                    await App.db.put('exams', { id: 'ex_'+Date.now(), title: $('exam-title').value, items: this.currentExamItems });
+                    App.UI.hideModal('modal-exam-form'); this.renderList(); $('exam-editor-section').classList.add('hidden'); $('exam-save-section').classList.add('hidden');
+                },
+                async deleteExam(id) { await App.db.delete('exams', id); this.renderList(); },
+                async printOMR(id) {
+                    const e = await App.db.get('exams', id);
+                    if(!e) return;
+                    
+                    // NOTE: bubble centers below are computed with the EXACT same formulas
+                    // used by OMRProcessor.process() (colOffsets/baseX/baseY, and the roll
+                    // grid's bx/cy) so that the printed circle centers land exactly on the
+                    // pixels the scanner samples. Every bubble is placed with absolute
+                    // left/top (not flexbox flow) and box-sizing:border-box so its rendered
+                    // size can't drift from what's specified, guaranteeing print/scan match.
+                    let itemsHtml = '';
+                    e.items.forEach((item, idx) => {
+                        const col = Math.floor(idx / 25);
+                        const row = idx % 25;
+                        const colOffsets = [40, 230, 420, 610];
+                        const baseX = colOffsets[col];
+                        const baseY = 200 + row * 30;
+
+                        itemsHtml += `<div class="qnum" style="left:${baseX-34}px; top:${baseY-15}px">${idx+1}.</div>`;
+                        if(item.type === 'mcq') {
+                            const labels = item.options === 2 ? ['T','F'] : ['A','B','C','D','E'];
+                            for(let i=0; i<item.options; i++) {
+                                const cx = baseX + i*40;
+                                itemsHtml += `<div class="circ" style="left:${cx-12}px; top:${baseY-12}px">${labels[i]}</div>`;
+                            }
+                        } else {
+                            itemsHtml += `<div class="sbox" style="left:${baseX}px; top:${baseY-15}px"></div>`;
+                        }
+                    });
+
+                    // Roll number bubble grid: bx = 600 + col*50, cy = 100 + r*30 (matches OMRProcessor exactly)
+                    let rollHtml = `<div style="position:absolute; left:585px; top:60px; width:130px; font-weight:bold; text-align:center; font-size:14px;">Roll No</div>`;
+                    for(let col=0; col<2; col++) {
+                        const bx = 600 + col*50;
+                        for(let r=0; r<10; r++) {
+                            const cy = 100 + r*30;
+                            rollHtml += `<div class="circ" style="left:${bx-12}px; top:${cy-12}px">${r}</div>`;
+                        }
+                    }
+                    
+                    const html = `
+                    <html><head><title>SnapGrade OMR - ${e.title}</title>
+                    <style>
+                        @page { size: A4 portrait; margin: 0; }
+                        body { margin:0; padding:0; display:flex; justify-content:center; align-items:center; height: 100vh; font-family: sans-serif; background: #fff;}
+                        .sheet { position: relative; width: 800px; height: 1000px; border: 1px solid #ddd; }
+                        .marker { position: absolute; width: 40px; height: 40px; background: black; }
+                        .m-tl { top:0; left:0; } .m-tr { top:0; right:0; } .m-bl { bottom:0; left:0; } .m-br { bottom:0; right:0; }
+                        .title { position: absolute; top: 30px; left: 100px; font-size: 24px; font-weight: bold; width: 400px; }
+                        .circ { position:absolute; box-sizing:border-box; width: 24px; height: 24px; border: 2px solid black; border-radius: 50%; text-align:center; line-height:20px; font-size:11px; font-weight:bold; background:#fff; }
+                        .qnum { position:absolute; box-sizing:border-box; width: 30px; height: 24px; line-height:24px; font-weight: bold; font-size: 13px; text-align:right; padding-right:4px;}
+                        .sbox { position:absolute; box-sizing:border-box; width: 250px; height: 30px; border: 1px solid black; }
+                    </style>
+                    </head><body onload="window.print()">
+                    <div class="sheet">
+                        <div class="marker m-tl"></div><div class="marker m-tr"></div><div class="marker m-bl"></div><div class="marker m-br"></div>
+                        <div class="title">${e.title}</div>
+                        ${rollHtml}
+                        ${itemsHtml}
+                    </div></body></html>`;
+                    
+                    const w = window.open('','_blank'); w.document.write(html); w.document.close();
+                }
+            },
+            Sections: {
+                activeSectionId: null,
+                async renderList() {
+                    const q = ($('search-sections').value || '').trim().toLowerCase();
+                    let sections = await App.db.getAll('sections');
+                    if(q) sections = sections.filter(s => s.name.toLowerCase().includes(q));
+                    const students = await App.db.getAll('students');
+                    const list = $('sections-list'); list.innerHTML = '';
+                    if(sections.length === 0) { list.innerHTML = `<div class="text-center text-gray-500 py-10">No sections found</div>`; return; }
+                    sections.forEach(s => {
+                        const count = students.filter(st => st.sectionId === s.id).length;
+                        list.innerHTML += `<div class="bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800" onclick="App.Controllers.Sections.openSection('${s.id}')"><div class="flex-1"><div class="font-bold text-lg">${s.name}</div><div class="text-xs text-gray-500">${count} Students</div></div><div class="flex gap-2"><button onclick="event.stopPropagation(); App.Controllers.Sections.editSection('${s.id}')" class="w-8 h-8 rounded bg-blue-100 text-blue-600"><i class="fas fa-edit"></i></button><button onclick="event.stopPropagation(); App.Controllers.Sections.deleteSection('${s.id}')" class="w-8 h-8 rounded bg-red-100 text-red-500"><i class="fas fa-trash"></i></button></div></div>`;
+                    });
+                },
+                newSection() {
+                    $('section-id').value = ''; $('section-name').value = '';
+                    App.UI.showModal('modal-section-form');
+                },
+                async saveSection() {
+                    if(!$('section-name').value) return App.UI.toast("Enter name");
+                    const id = $('section-id').value || 'sec_'+Date.now();
+                    await App.db.put('sections', { id: id, name: $('section-name').value });
+                    App.UI.hideModal('modal-section-form'); this.renderList();
+                },
+                async editSection(id) {
+                    const s = await App.db.get('sections', id);
+                    $('section-id').value = s.id; $('section-name').value = s.name;
+                    App.UI.showModal('modal-section-form');
+                },
+                async deleteSection(id) {
+                    if(confirm("Delete section and all its students?")) {
+                        await App.db.delete('sections', id);
+                        const students = await App.db.getAll('students');
+                        for(let st of students) { if(st.sectionId === id) await App.db.delete('students', st.id); }
+                        this.renderList();
+                    }
+                },
+                async openSection(id) {
+                    this.activeSectionId = id;
+                    const s = await App.db.get('sections', id);
+                    $('active-section-name').innerText = s.name;
+                    App.navigate('section-details');
+                    App.Controllers.Students.renderList();
+                }
+            },
+            Students: {
+                async renderList() {
+                    const sectionId = App.Controllers.Sections.activeSectionId;
+                    let students = await App.db.getByIndex('students', 'sectionId', sectionId);
+                    students.sort((a,b) => parseInt(a.rollNo) - parseInt(b.rollNo));
+                    const list = $('students-list'); list.innerHTML = '';
+                    if(students.length === 0) { list.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-gray-500">No students. Add manually or import via CSV.</td></tr>`; return; }
+                    students.forEach(s => {
+                        list.innerHTML += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"><td class="p-3 text-center font-bold text-gray-500">${s.rollNo}</td><td class="p-3 font-medium">${s.name}</td><td class="p-3 text-right"><button onclick="App.Controllers.Students.editStudent('${s.id}')" class="text-blue-500 mr-3"><i class="fas fa-edit"></i></button><button onclick="App.Controllers.Students.deleteStudent('${s.id}')" class="text-red-500"><i class="fas fa-trash"></i></button></td></tr>`;
+                    });
+                },
+                async saveStudent() {
+                    const sectionId = App.Controllers.Sections.activeSectionId;
+                    const roll = $('student-roll').value.padStart(2, '0');
+                    const name = $('student-name').value.trim();
+                    if(!roll || !name) return App.UI.toast("Please fill all fields");
+                    const id = $('student-id').value || 'stu_'+Date.now();
+                    await App.db.put('students', { id: id, sectionId, rollNo: roll, name });
+                    App.UI.hideModal('modal-student-form'); this.renderList();
+                    $('student-id').value=''; $('student-roll').value=''; $('student-name').value='';
+                },
+                async editStudent(id) {
+                    const s = await App.db.get('students', id);
+                    $('student-id').value = s.id; $('student-roll').value = s.rollNo; $('student-name').value = s.name;
+                    $('student-form-title').innerText = "Edit Student";
+                    App.UI.showModal('modal-student-form');
+                },
+                async deleteStudent(id) {
+                    if(confirm("Delete this student?")) { await App.db.delete('students', id); this.renderList(); }
+                },
+                async processBulkImport() {
+                    const sectionId = App.Controllers.Sections.activeSectionId;
+                    const data = $('bulk-import-data').value.trim().split('\n');
+                    let count = 0;
+                    for(let row of data) {
+                        const parts = row.split(',');
+                        if(parts.length >= 2) {
+                            const roll = parts[0].trim().padStart(2, '0');
+                            const name = parts[1].trim();
+                            if(roll && name) {
+                                await App.db.put('students', { id: 'stu_'+Date.now()+Math.random(), sectionId, rollNo: roll, name });
+                                count++;
+                            }
+                        }
+                    }
+                    App.UI.toast(`Imported ${count} students`, "success");
+                    App.UI.hideModal('modal-bulk-import'); this.renderList();
+                    $('bulk-import-data').value = '';
+                }
+            },
+            Settings: {
+                load() {
+                    const s = App.db.getSettings();
+                    $('calib-threshold').value = s.threshold; $('val-thresh').innerText = s.threshold;
+                    $('calib-sensitivity').value = s.sensitivity; $('val-sens').innerText = s.sensitivity+'%';
+                },
+                saveCalibration() {
+                    App.db.saveSettings({ threshold: parseInt($('calib-threshold').value), sensitivity: parseInt($('calib-sensitivity').value) });
+                    App.UI.toast("Calibration Saved", "success");
+                },
+                async exportDatabase() {
+                    const d = {}; for(let k of ['exams','sections','assignments','results','settings','students']) d[k] = await App.db.getAll(k);
+                    App.Controllers.Home.downloadFile(JSON.stringify(d), 'Backup.json');
+                },
+                importDatabase(event) {
+                    const file = event.target.files[0];
+                    if(!file) return;
+                    const reader = new FileReader();
+                    reader.onload = async (e) => {
+                        try {
+                            const data = JSON.parse(e.target.result);
+                            for(let k of Object.keys(data)) {
+                                if(Array.isArray(data[k])) {
+                                    for(let item of data[k]) await App.db.put(k, item);
+                                } else if(k === 'settings') {
+                                    App.db.saveSettings(data[k]);
+                                }
+                            }
+                            App.UI.toast("Database Imported Successfully!", "success");
+                            setTimeout(() => window.location.reload(), 1000);
+                        } catch(err) { App.UI.toast("Invalid backup file format", "error"); }
+                    };
+                    reader.readAsText(file);
+                }
+            }
+        };
+
+        const App = {
+            db: new AppDB(), UI: new UIManager(), Scanner: new ScannerEngine(), Controllers,
+            async init() { await this.db.init(); this.UI.navigate('home'); },
+            navigate(id) { this.UI.navigate(id); },
+            async clearDatabase() {
+                if(confirm("This will permanently delete ALL exams, sections, students, and results. This cannot be undone. Continue?")) {
+                    await this.db.clearAll();
+                }
+            }
+        };
+
+        window.addEventListener('load', () => App.init());
+    </script>
+</body>
+</html>
